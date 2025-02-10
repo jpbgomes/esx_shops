@@ -4,7 +4,7 @@ game 'gta5'
 
 description 'A shop system for ESX Legacy, to allow players to buy items'
 lua54 'yes'
-version '1.2'
+version '1.1'
 
 shared_script '@es_extended/imports.lua'
 

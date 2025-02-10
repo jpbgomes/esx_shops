@@ -1,121 +1,134 @@
-local hasAlreadyEnteredMarker, lastZone
-local currentAction, currentActionMsg, currentActionData = nil, nil, {}
+ESX = exports["es_extended"]:getSharedObject()
 
-local function openShopMenu(zone)
-	local elements = {
-		{unselectable = true, icon = "fas fa-shopping-basket", title = TranslateCap('shop') }
-	}
+local PlayerData = {}
+local dbItems = {}
+local pedHandles = {}
 
-	for i=1, #Config.Zones[zone].Items, 1 do
-		local item = Config.Zones[zone].Items[i]
-
-		elements[#elements+1] = {
-			icon = "fas fa-shopping-basket",
-			title = ('%s - <span style="color:green;">%s</span>'):format(item.label, TranslateCap('shop_item', ESX.Math.GroupDigits(item.price))),
-			itemLabel = item.label,
-			item = item.name,
-			price = item.price
-		}
-	end
-
-	ESX.OpenContext("right", elements, function(menu,element)
-		local elements2 = {
-			{unselectable = true, icon = "fas fa-shopping-basket", title = element.title},
-			{icon = "fas fa-shopping-basket", title = TranslateCap('amount'), input = true, inputType = "number", inputPlaceholder = TranslateCap('amount_placeholder'), inputMin = 1, inputMax = 25},
-			{icon = "fas fa-check-double", title = TranslateCap('confirm'), val = "confirm"}
-		}
-
-		ESX.OpenContext("right", elements2, function(menu2,element2)
-			local amount = menu2.eles[2].inputValue
-			ESX.CloseContext()
-			TriggerServerEvent('esx_shops:buyItem', element.item, amount, zone)
-		end, function(menu)
-			currentAction     = 'shop_menu'
-			currentActionMsg  = TranslateCap('press_menu', ESX.GetInteractKey())
-			currentActionData = {zone = zone}
+Citizen.CreateThread(function()
+	while true do
+    local sleep = 60000
+		ESX.TriggerServerCallback('esx_shops:getData', function(cb)
+			dbItems = cb or {}
 		end)
-	end, function(menu)
-		currentAction     = 'shop_menu'
-		currentActionMsg  = TranslateCap('press_menu', ESX.GetInteractKey())
-		currentActionData = {zone = zone}
-	end)
-end
-
-local function hasEnteredMarker(zone)
-	currentAction     = 'shop_menu'
-	currentActionMsg  = TranslateCap('press_menu', ESX.GetInteractKey())
-	currentActionData = {zone = zone}
-end
-
-local function hasExitedMarker(zone)
-	currentAction = nil
-	ESX.CloseContext()
-end
-
--- Create Blips
-CreateThread(function()
-	for k,v in pairs(Config.Zones) do
-		for i = 1, #v.Pos, 1 do
-			if not v.ShowBlip then return end
-				
-			local blip = AddBlipForCoord(v.Pos[i])
-
-			SetBlipSprite (blip, v.Type)
-			SetBlipScale  (blip, v.Size)
-			SetBlipColour (blip, v.Color)
-			SetBlipAsShortRange(blip, true)
-
-			BeginTextCommandSetBlipName('STRING')
-			AddTextComponentSubstringPlayerName(TranslateCap('shops'))
-			EndTextCommandSetBlipName(blip)
-		end
+		Citizen.Wait(sleep)
 	end
 end)
 
--- Enter / Exit marker events
+Citizen.CreateThread(function()
+  while true do
+    local sleep = 1500
+    PlayerData = ESX.GetPlayerData()
+    Citizen.Wait(sleep)
+  end
+end)
+
 CreateThread(function()
-	while true do
-		local sleep = 1500
-
-		local playerCoords = GetEntityCoords(ESX.PlayerData.ped)
-		local isInMarker, currentZone = false, nil
-
-		for k,v in pairs(Config.Zones) do
-			for i = 1, #v.Pos, 1 do
-				local distance = #(playerCoords - v.Pos[i])
-
-				if distance < Config.DrawDistance then
-					sleep = 0
-					if v.ShowMarker then
-						DrawMarker(Config.MarkerType, v.Pos[i], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, Config.MarkerSize.x, Config.MarkerSize.y, Config.MarkerSize.z, Config.MarkerColor.r, Config.MarkerColor.g, Config.MarkerColor.b, 100, false, true, 2, false, nil, nil, false)
-				  	end
-					if distance < 2.0 then
-						isInMarker  = true
-						currentZone = k
-						lastZone    = k
-					end
+	for i, zone in pairs(Config.Zones) do
+		if zone.Shops then
+			for k, shop in ipairs(zone.Shops) do
+				if zone.ShowBlip then
+					createBlip(shop.coords, zone.Sprite, zone.Size, zone.Color, zone.Name)
 				end
+
+				createPed(zone.Ped, shop.coords)
+				exports.qtarget:AddBoxZone('ESX_Shop'..i..'-'..k, shop.coords, 1.0, 1.5,
+					{
+						debugPoly = false,
+						name = 'ESX_Shop'..i..'-'..k,
+						heading = shop.coords[4],
+						minZ = shop.coords.z - 1.0,
+						maxZ = shop.coords.z + 1.5
+					}, {
+						options = {{
+							icon = 'fas fa-wallet',
+							label = 'Aceder à Loja',
+							event = 'esx_shops:openShop',
+							zoneData = zone,
+							shopData = shop,
+						}},
+						distance = 2.0
+					}
+				)
 			end
 		end
-
-		if isInMarker and not hasAlreadyEnteredMarker then
-			hasAlreadyEnteredMarker = true
-			hasEnteredMarker(currentZone)
-			ESX.TextUI(currentActionMsg)
-		end
-
-		if not isInMarker and hasAlreadyEnteredMarker then
-			hasAlreadyEnteredMarker = false
-			ESX.HideUI()
-			hasExitedMarker(lastZone)
-		end
-			
-		Wait(sleep)
 	end
 end)
 
-ESX.RegisterInteraction("shop_menu", function()
-	openShopMenu(currentActionData.zone)
-end, function()
-	return currentAction and currentAction == 'shop_menu'
+RegisterNetEvent("esx_shops:openShop")
+AddEventHandler("esx_shops:openShop", function(data)
+	local hasAcess = false
+	if data.shopData.restricted ~= nil and data.shopData.restricted == true then
+		for i, jobName in ipairs(data.shopData.jobs) do
+			if jobName == PlayerData.job.name then
+				hasAcess = true
+				break
+			end
+		end
+	else
+		hasAcess = true
+	end
+
+	if hasAcess then
+		local elements = {}
+
+		for i=1, #data.zoneData.Items, 1 do
+			local item = data.zoneData.Items[i]
+
+			local dbItemData = nil
+			for j = 1, #dbItems, 1 do
+				if dbItems[j].name == item.name then
+					dbItemData = dbItems[j]
+					break
+				end
+			end
+
+			elements[#elements+1] = {
+				name = item.name,
+				label = dbItemData and dbItemData.label or item.label,
+				type = "item_standard",
+				usable = false,
+				rare = item.rare,
+				limit = -1,
+				price = item.price,
+				canRemove = false
+			}
+		end
+
+		if data.zoneData.Type == "pawn" then
+			TriggerEvent("esx_inventoryhud:openPawn", data.zoneData, elements)
+		elseif data.zoneData.Type == "normal" then
+			TriggerEvent("esx_inventoryhud:openShop", data.zoneData, elements)
+		end
+	else
+		ESX.ShowNotification(TranslateCap('no_access'))
+	end
 end)
+
+function createBlip(coords, sprite, size, color, name)
+	local blip = AddBlipForCoord(coords)
+					
+	SetBlipSprite(blip, sprite)
+	SetBlipScale(blip, size)
+	SetBlipColour(blip, color)
+	SetBlipAsShortRange(blip, true)
+
+	BeginTextCommandSetBlipName('STRING')
+	AddTextComponentSubstringPlayerName(name)
+	EndTextCommandSetBlipName(blip)
+end
+
+function createPed(model, coords)
+	RequestModel(model)
+	while not HasModelLoaded(model) do
+		Citizen.Wait(1)
+	end
+
+	local ped = CreatePed(4, model, coords.x, coords.y, coords.z - 1, coords[4], false, true)	
+	SetEntityHeading(ped, coords[4])
+	SetEntityInvincible(ped, true)
+	SetBlockingOfNonTemporaryEvents(ped, true)
+	TaskSetBlockingOfNonTemporaryEvents(ped, true)
+	FreezeEntityPosition(ped, true)
+
+	table.insert(pedHandles, ped)
+end
